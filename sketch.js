@@ -1,292 +1,559 @@
-/*
- * ============================================================================
- * COMMENTARY (500 words)
- * ============================================================================
- *
- * [TODO: Add your 500-word commentary here explaining your approach, design
- * decisions, challenges faced, and how you implemented the game mechanics.]
- *
- * This snooker game implements the core mechanics of the sport using p5.js
- * for rendering and Matter.js for physics simulation. The project demonstrates
- * understanding of:
- *
- * 1. Physics simulation and collision detection
- * 2. Game state management
- * 3. User input handling
- * 4. Visual rendering and animation
- *
- * [Continue with your detailed commentary about the implementation...]
- *
- * ============================================================================
- */
-
-// Matter.js module aliases
-const Engine = Matter.Engine;
-const World = Matter.World;
-const Bodies = Matter.Bodies;
-const Body = Matter.Body;
-
-// Physics engine and world
+let Engine = Matter.Engine,
+    Bodies = Matter.Bodies,
+    Composite = Matter.Composite;
 let engine;
-let world;
 
-// Game objects
-let cueBall;
-let balls = []; // All balls (reds + colours + cue)
-let redBalls = [];
-let colourBalls = [];
+/**
+ * Creates the physics engine.
+ * and sets the gravity to 0.
+ */
+function setupPhysics() {
+    engine = Engine.create();
+    engine.gravity.y = 0;
+}
 
-// Table physics objects
-let cushions = [];
-let pockets = [];
+let table;
 
-// Game state
-const GameMode = Object.freeze({
-  STANDARD: 1,
-  RANDOM_REDS_CLUSTER: 2,
-  PRACTICE_REDS: 3,
-});
-let currentMode = GameMode.STANDARD;
+/**
+ * Initializes the game state with rendering, physics and scene variables.
+ */
+function setup() {
+    canvas = createCanvas(1600, 900);
+    rectMode(CENTER);
+    textAlign(CENTER);
+    angleMode(DEGREES);
+    setupPhysics();
+    table = new Table(createVector(width / 2, height / 2), createVector(1200, 600), "#4f8834");
+}
 
-// Cue / interaction state
-let isAiming = false;
-let cueAimAngle = 0;
-let cuePower = 0;
-
-// Cue ball insertion state (must be interactive and restricted to the D)
-let isPlacingCueBall = true;
-let cueBallGhostPos = null;
-
-// Animation / feedback state
-const ballTrails = new Map(); // ball -> [{x,y,alpha}, ...]
-let cueImpactEffects = []; // e.g. [{x,y,ageMs}, ...]
-let pocketEntryEffects = []; // e.g. [{ball,ageMs}, ...]
-
-// Canvas dimensions
-const CANVAS_WIDTH = 1200;
-const CANVAS_HEIGHT = 700;
-
-// Table specification (derived from requirements)
-// Real snooker table ratio: 12ft x 6ft => width = length/2
-const TABLE_LENGTH = 1000; // TODO: tune to fit canvas while staying centered
-const TABLE_WIDTH = TABLE_LENGTH / 2;
-const BALL_DIAMETER = TABLE_WIDTH / 36;
-const POCKET_DIAMETER = 1.5 * BALL_DIAMETER;
-
-// Table layout (computed each init)
-let table = {
-  x: 0,
-  y: 0,
-  length: TABLE_LENGTH,
-  width: TABLE_WIDTH,
-  // D-zone / baulk line geometry
-  baulkLineX: 0,
-  dCenterX: 0,
-  dCenterY: 0,
-  dRadius: TABLE_WIDTH / 6,
+/**
+ * Draws the background, table and its elements. Also updates the physics engine.
+ */
+function draw() {
+    Engine.update(engine);
+    background(200);
+    table.draw();
+}
+/**
+ * Represents the snooker table.
+ * @class
+ */
+class Table {
+    constructor(position, size, color) {
+        this.position = position;
+        this.size = size;
+        this.color = color;
+        this.ballDiameter = this.size.x / 36;
+        this.pocketDiameter = this.ballDiameter * 1.5;
+        this.pocketCoverWidth = this.ballDiameter * 2;
+        this.borders = this.spawnBorders();
+        this.pockets = this.spawnPockets();
+        this.pocketCovers = this.spawnPocketCovers();
+        this.cushions = this.spawnCushions();
+        this.balls = this.spawnBalls();
+        this.cue = new Cue(this.position, createVector(360, 12));
+        this.cue.spawn(this.balls[0]);
+    }
+    draw() {w
+        this.drawSelf();
+        this.drawLine();
+        this.drawD();
+        this.drawCushions();
+        this.drawBorders();
+        this.drawPocketCovers();
+        this.drawPockets();
+        this.drawBalls();
+        this.cue.draw();
+    }
+    drawSelf() {
+        push();
+        noStroke();
+        fill(this.color);
+        rect(this.position.x, this.position.y, this.size.x, this.size.y);
+        pop();
+    }
+    drawBorders() {
+        this.borders.forEach(border => border.draw());
+    }
+    drawPockets() {
+        this.pockets.forEach(pocket => pocket.draw());
+    }
+    drawPocketCovers() {
+        this.pocketCovers.forEach(pocketCover => pocketCover.draw());
+    }
+    drawCushions() {
+        this.cushions.forEach(cushion => cushion.draw());
+    }
+    drawLine() {
+        push();
+        noFill();
+        stroke(255);
+        strokeWeight(2);
+        translate(this.position.x, this.position.y);
+        line(
+            -this.position.x / 3,
+            -this.size.y / 2,
+            -this.position.x / 3,
+            this.size.y / 2
+        );
+        pop();
+    }
+    drawD() {
+        push();
+        noFill();
+        stroke(255);
+        strokeWeight(2);
+        translate(this.position.x, this.position.y);
+        arc(
+            -this.position.x / 3,
+            0,
+            250,
+            250,
+            90,
+            270
+        )
+        pop();
+    }
+    drawBalls() {
+        this.balls.forEach(ball => ball.draw());
+    }
+    spawnBorders() {
+        let borders = [];
+        let borderThickness = 32;
+        let borderLength = this.size.x / 2 - this.pocketCoverWidth;
+        // Top-left border
+        borders.push(new TableBorder(this.position, createVector(-this.size.x / 4, -this.size.y / 2 - borderThickness / 2), createVector(borderLength, borderThickness), "#41230d"));
+        // Top-right border
+        borders.push(new TableBorder(this.position, createVector(this.size.x / 4, -this.size.y / 2 - borderThickness / 2), createVector(borderLength, borderThickness), "#41230d"));
+        // Right border
+        borders.push(new TableBorder(this.position, createVector(this.size.x / 2 + borderThickness / 2, 0), createVector(borderThickness, borderLength), "#41230d"));
+        // Bottom-right border
+        borders.push(new TableBorder(this.position, createVector(this.size.x / 4, this.size.y / 2 + borderThickness / 2), createVector(borderLength, borderThickness), "#41230d"));
+        // Bottom-left border
+        borders.push(new TableBorder(this.position, createVector(-this.size.x / 4, this.size.y / 2 + borderThickness / 2), createVector(borderLength, borderThickness), "#41230d"));
+        // Left border
+        borders.push(new TableBorder(this.position, createVector(-this.size.x / 2 - borderThickness / 2, 0), createVector(borderThickness, borderLength), "#41230d"));
+        return borders;
+    }
+    spawnPockets() {
+        let pockets = [];
+        // Top pocket
+        pockets.push(new Pocket(this.position, createVector(0, -this.size.y / 2), this.pocketDiameter, "#000"));
+        // Top-right pocket
+        pockets.push(new Pocket(this.position, createVector(this.size.x / 2, -this.size.y / 2), this.pocketDiameter, "#000"));
+        // Bottom-right pocket
+        pockets.push(new Pocket(this.position, createVector(this.size.x / 2, this.size.y / 2), this.pocketDiameter, "#000"));
+        // Bottom pocket
+        pockets.push(new Pocket(this.position, createVector(0, this.size.y / 2), this.pocketDiameter, "#000"));
+        // Bottom-left pocket
+        pockets.push(new Pocket(this.position, createVector(-this.size.x / 2, this.size.y / 2), this.pocketDiameter, "#000"));
+        // Top-left pocket
+        pockets.push(new Pocket(this.position, createVector(-this.size.x / 2, -this.size.y / 2), this.pocketDiameter, "#000"));
+        return pockets;
+    }
+    spawnPocketCovers() {
+        let pocketCovers = [];
+        let pocketCoverThickness = 32;
+        // Top pocket cover
+        pocketCovers.push(new PocketCover(this.position, createVector(0, -this.size.y / 2 - pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        // Top-right pocket cover top edge
+        pocketCovers.push(new PocketCover(this.position, createVector(this.size.x / 2, -this.size.y / 2 - pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        // Top-right pocket cover bottom edge
+        pocketCovers.push(new PocketCover(this.position, createVector(this.size.x / 2 + this.pocketCoverWidth / 2 - pocketCoverThickness / 2, -this.size.y / 2), createVector(pocketCoverThickness, this.pocketCoverWidth), "#ecd850"));
+        // Bottom-right pocket cover top edge
+        pocketCovers.push(new PocketCover(this.position, createVector(this.size.x / 2 + this.pocketCoverWidth / 2 - pocketCoverThickness / 2, this.size.y / 2), createVector(pocketCoverThickness, this.pocketCoverWidth), "#ecd850"));
+        // Bottom-right pocket cover bottom edge
+        pocketCovers.push(new PocketCover(this.position, createVector(this.size.x / 2, this.size.y / 2 + pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        // Bottom pocket cover
+        pocketCovers.push(new PocketCover(this.position, createVector(0, this.size.y / 2 + pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        // Bottom pocket cover bottom edge
+        pocketCovers.push(new PocketCover(this.position, createVector(-this.size.x / 2, this.size.y / 2 + pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        // Bottom pocket cover top edge
+        pocketCovers.push(new PocketCover(this.position, createVector(-this.size.x / 2 - this.pocketCoverWidth / 2 + pocketCoverThickness / 2, this.size.y / 2), createVector(pocketCoverThickness, this.pocketCoverWidth), "#ecd850"));
+        // Top-left pocket cover bottom edge
+        pocketCovers.push(new PocketCover(this.position, createVector(-this.size.x / 2 - this.pocketCoverWidth / 2 + pocketCoverThickness / 2, -this.size.y / 2), createVector(pocketCoverThickness, this.pocketCoverWidth), "#ecd850"));
+        // Top-left pocket cover top edge
+        pocketCovers.push(new PocketCover(this.position, createVector(-this.size.x / 2, -this.size.y / 2 - pocketCoverThickness / 2), createVector(this.pocketCoverWidth, pocketCoverThickness), "#ecd850"));
+        return pocketCovers;
+    }
+    spawnCushions() {
+        let cushions = [];
+        let cushionLength = this.size.x / 4 - this.pocketCoverWidth / 3.5;
+        let offsetFromBorder = 12;
+        // Top-left cushion
+        cushions.push(new Cushion(createVector(this.position.x - this.size.x / 4, this.position.y - this.size.y / 2 + offsetFromBorder), [
+            { x: -cushionLength + this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: -cushionLength + this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 },
+            { x: cushionLength - this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: cushionLength - this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 }
+        ], "#33601a"));
+        // Top-right cushion
+        cushions.push(new Cushion(createVector(this.position.x + this.size.x / 4, this.position.y - this.size.y / 2 + offsetFromBorder), [
+            { x: -cushionLength + this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: -cushionLength + this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 },
+            { x: cushionLength - this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: cushionLength - this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 }
+        ], "#33601a"));
+        // Right cushion
+        cushionLength -= this.pocketCoverWidth * 0.7;
+        cushions.push(new Cushion(createVector(this.position.x + this.size.x / 2 - offsetFromBorder, this.position.y), [
+            { x: this.pocketDiameter, y: -cushionLength - this.pocketDiameter / 7 },
+            { x: this.pocketDiameter * 1.5, y: -cushionLength - this.pocketDiameter * 5 / 7 },
+            { x: this.pocketDiameter, y: cushionLength + this.pocketDiameter / 7 },
+            { x: this.pocketDiameter * 1.5, y: cushionLength + this.pocketDiameter * 5 / 7 }
+        ], "#33601a"));
+        // Left cushion
+        cushions.push(new Cushion(createVector(this.position.x - this.size.x / 2 + offsetFromBorder, this.position.y), [
+            { x: -this.pocketDiameter, y: -cushionLength - this.pocketDiameter / 7 },
+            { x: -this.pocketDiameter * 1.5, y: -cushionLength - this.pocketDiameter * 5 / 7 },
+            { x: -this.pocketDiameter, y: cushionLength + this.pocketDiameter / 7 },
+            { x: -this.pocketDiameter * 1.5, y: cushionLength + this.pocketDiameter * 5 / 7 }
+        ], "#33601a"));
+        // Bottom-right cushion
+        cushions.push(new Cushion(createVector(this.position.x + this.size.x / 4, this.position.y + this.size.y / 2 - offsetFromBorder), [
+            { x: cushionLength + this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: cushionLength + this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 },
+            { x: -cushionLength - this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: -cushionLength - this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 }
+        ], "#33601a"));
+        // Bottom-left cushion
+        cushions.push(new Cushion(createVector(this.position.x - this.size.x / 4, this.position.y + this.size.y / 2 - offsetFromBorder), [
+            { x: cushionLength + this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: cushionLength + this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 },
+            { x: -cushionLength - this.pocketDiameter / 7, y: this.pocketDiameter },
+            { x: -cushionLength - this.pocketDiameter * 5 / 7, y: this.pocketDiameter * 1.5 }
+        ], "#33601a"));
+        return cushions;
+    }
+    spawnBalls() {
+        let balls = [];
+        // Cue
+        balls.push(new CueBall(this.position, createVector(-this.size.x / 4 - this.ballDiameter * 2, 0), this.ballDiameter));
+        // Green
+        balls.push(new Ball(this.position, createVector(-this.size.x / 3 + 125 + this.ballDiameter / 4, -125), this.ballDiameter, "green"));
+        // Brown
+        balls.push(new Ball(this.position, createVector(-this.size.x / 3 + 125 + this.ballDiameter / 4, 0), this.ballDiameter, "brown"));
+        // Yellow
+        balls.push(new Ball(this.position, createVector(-this.size.x / 3 + 125 + this.ballDiameter / 4, 125), this.ballDiameter, "yellow"));
+        // Blue
+        balls.push(new Ball(this.position, createVector(0, 0), this.ballDiameter, "blue"));
+        // Pink
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 - this.ballDiameter * 1, 0), this.ballDiameter, "pink"));
+        // Black
+        balls.push(new Ball(this.position, createVector(this.size.x / 2.5 - this.ballDiameter * 1, 0), this.ballDiameter, "black"));
+        // Reds
+        // First row
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 0, 0), this.ballDiameter, "red"));
+        // Second row
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 1, -this.ballDiameter / 2), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 1, this.ballDiameter / 2), this.ballDiameter, "red"));
+        // Third row
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 2, -this.ballDiameter), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 2, 0), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 2, this.ballDiameter), this.ballDiameter, "red"));
+        // Fourth row
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 3, -this.ballDiameter * 3 / 2), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 3, -this.ballDiameter / 2), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 3, this.ballDiameter / 2), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 3, this.ballDiameter * 3 / 2), this.ballDiameter, "red"));
+        // Fifth row
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 4, -this.ballDiameter * 2), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 4, -this.ballDiameter), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 4, 0), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 4, this.ballDiameter), this.ballDiameter, "red"));
+        balls.push(new Ball(this.position, createVector(this.size.x / 6 + this.ballDiameter * 4, this.ballDiameter * 2), this.ballDiameter, "red"));
+        return balls;
+    }
 };
 
 /**
- * p5.js setup function - runs once at start
+ * Represents the table borders.
+ * @class
  */
-function setup() {
-  createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
-
-  // Initialize Matter.js physics engine
-  engine = Engine.create();
-  world = engine.world;
-  world.gravity.y = 0; // No gravity for top-down view
-
-  // Initialize game objects
-  initializeGame();
-}
+class TableBorder {
+    constructor(tablePosition, position, size, color) {
+        this.tablePosition = tablePosition;
+        this.position = position;
+        this.size = size;
+        this.color = color;
+    }
+    draw() {
+        push();
+        noStroke();
+        translate(this.tablePosition.x, this.tablePosition.y);
+        fill(this.color);
+        rect(this.position.x, this.position.y, this.size.x, this.size.y);
+        pop();
+    }
+};
 
 /**
- * p5.js draw function - runs continuously
+ * Represents the snooker pockets.
+ * @class
  */
-function draw() {
-  background(34, 139, 34); // Green snooker table color
-
-  // Update physics engine
-  Engine.update(engine);
-
-  // TODO: Apply gentle rolling resistance / damping so balls come to rest
-  updateBallTrails();
-  checkPocketedBalls();
-  updateEffects();
-
-  // Render game objects
-  renderTable();
-  renderBalls();
-  renderCue();
-  renderEffects();
-}
+class Pocket {
+    constructor(tablePosition, position, diameter, color) {
+        this.tablePosition = tablePosition;
+        this.position = position;
+        this.diameter = diameter;
+        this.color = color;
+    }
+    draw() {
+        push();
+        noStroke();
+        translate(this.tablePosition.x, this.tablePosition.y);
+        fill(this.color);
+        circle(this.position.x, this.position.y, this.diameter);
+        pop();
+    }
+};
 
 /**
- * Initialize game objects and setup
+ * Represents the pocket covers.
+ * @class
  */
-function initializeGame() {
-  // TODO: Clear previous Matter world bodies if re-initializing
-
-  computeTableLayout();
-
-  // Physics: cushions/boundaries must exist and have different physics from balls
-  createCushions();
-  createPockets();
-
-  // Balls must be stored in arrays
-  redBalls = [];
-  colourBalls = [];
-  balls = [];
-
-  // Cue ball MUST be inserted by interaction and only within the D
-  cueBall = null;
-  isPlacingCueBall = true;
-
-  // Coloured balls must exist in ALL modes
-  placeColouredBalls();
-
-  // Mode-specific reds
-  setMode(currentMode);
-}
-
-function computeTableLayout() {
-  // Draw the table centered on the canvas
-  table.length = TABLE_LENGTH;
-  table.width = TABLE_WIDTH;
-  table.x = (width - table.length) / 2;
-  table.y = (height - table.width) / 2;
-
-  // TODO: Use snooker reference for accurate baulk line position
-  table.baulkLineX = table.x + table.length * 0.2;
-  table.dCenterX = table.baulkLineX;
-  table.dCenterY = table.y + table.width / 2;
-  table.dRadius = table.width / 6;
-}
-
-function setMode(mode) {
-  currentMode = mode;
-
-  // TODO: Remove existing reds from world when switching modes
-  redBalls = [];
-
-  if (mode === GameMode.STANDARD) {
-    // TODO: Mode 1: standard full layout for reds + colours (reds triangle, colours on spots)
-    createRedsStandard();
-  } else if (mode === GameMode.RANDOM_REDS_CLUSTER) {
-    // TODO: Mode 2: reds only in random positions in clusters (nested loops + random)
-    createRedsRandomClusters();
-  } else if (mode === GameMode.PRACTICE_REDS) {
-    // TODO: Mode 3: practice mode (reds only), colours still present
-    createRedsPractice();
-  }
-}
+class PocketCover {
+    constructor(tablePosition, position, size, color) {
+        this.tablePosition = tablePosition;
+        this.position = position;
+        this.size = size;
+        this.color = color;
+    }
+    draw() {
+        push();
+        translate(this.tablePosition.x, this.tablePosition.y);
+        fill(this.color);
+        noStroke();
+        rect(this.position.x, this.position.y, this.size.x, this.size.y);
+        pop();
+    }
+};
 
 /**
- * Render the snooker table
+ * Represents the table cushions.
+ * @class
  */
-function renderTable() {
-  // TODO: Draw table outline / wooden border
-  // TODO: Draw cloth area (play surface) using table.x/y/length/width
-  // TODO: Draw pockets using POCKET_DIAMETER and pocket centers
-  // TODO: Draw table markings: baulk line, D semicircle, centre line/spots (more accurate = higher marks)
-}
+class Cushion {
+    constructor(position, points, color) {
+        this.points = points;
+        this.color = color;
+        this.body = Bodies.fromVertices(
+            position.x, position.y, points, {
+            isStatic: true, restitution: 0.3
+        }
+        )
+        this.turnPhysicsOn();
+    }
+    turnPhysicsOn() {
+        Composite.add(engine.world, [this.body]);
+    }
+    turnPhysicsOff() {
+        Composite.remove(engine.world, [this.body]);
+    }
+    draw() {
+        push();
+        noStroke();
+        fill(this.color);
+        beginShape();
+        this.body.vertices.forEach(bodyVertex => {
+            vertex(bodyVertex.x, bodyVertex.y)
+        });
+        endShape(CLOSE);
+        pop();
+    }
+};
 
 /**
- * Render all balls
+ * Represents the snooker balls.
+ * @class
  */
-function renderBalls() {
-  // TODO: Draw all balls with proper colours (cue, reds, and 6 colours)
-  // TODO: Use Matter body positions for rendering
-  // TODO: Draw ball trail effect (fading) based on stored trail points
-}
-
-function renderCue() {
-  // TODO: Draw the cue and allow user to rotate/position it to strike the cue ball
-  // TODO: Use combination of mouse + key interaction for top marks
-  // TODO: Avoid “elastic band” behaviour; cue should feel like a rigid stick
-}
-
-function createCushions() {
-  // TODO: Create static boundary bodies with cushion-specific restitution/friction
-  // NOTE: Cushion physics should differ from ball physics
-}
-
-function createPockets() {
-  // TODO: Define 6 pockets (corners + middles) and store centers in pockets[]
-  // TODO: Optionally add sensor bodies or use distance checks for potting
-}
-
-function placeColouredBalls() {
-  // TODO: Place yellow/green/brown/blue/pink/black on correct spots per snooker rules
-  // TODO: Ensure these are present in modes 1–3
-}
-
-function createRedsStandard() {
-  // TODO: Place 15 reds in triangle near the pink spot
-}
-
-function createRedsRandomClusters() {
-  // TODO: Use nested loops + random() to create multiple clusters of reds
-  // TODO: Ensure reds don’t overlap and remain within cushion bounds
-}
-
-function createRedsPractice() {
-  // TODO: Place a small set of reds in a practice arrangement (e.g., line/arc)
-}
-
-function updateBallTrails() {
-  // TODO: Record recent positions per moving ball and fade over time
-}
-
-function updateEffects() {
-  // TODO: Age out cueImpactEffects and pocketEntryEffects
-}
-
-function renderEffects() {
-  // TODO: Cue impact feedback: flash or emanating circles at impact point
-  // TODO: Pocket entry animation: shrink/fade the ball or animate the pocket
-}
-
-function checkPocketedBalls() {
-  // TODO: Detect ball entering a pocket (distance to pocket center <= POCKET_DIAMETER/2)
-  // TODO: Trigger pocket entry animation and remove/disable the ball’s body
-}
-
-function isPointInDZone(x, y) {
-  // Cue ball can only be inserted inside the D (semi-circle in baulk area)
-  // TODO: Enforce the correct side of the baulk line (inside D only)
-  const dx = x - table.dCenterX;
-  const dy = y - table.dCenterY;
-  return dx * dx + dy * dy <= table.dRadius * table.dRadius;
-}
+class Ball {
+    constructor(tablePosition, position, diameter, color) {
+        this.tablePosition = tablePosition;
+        this.position = position;
+        this.diameter = diameter;
+        this.color = color;
+        this.isPhysicsEnabled = false;
+        this.physicsOptions = {
+            restitution: 0.6, friction: 0.4, density: 0.002
+        };
+        this.turnPhysicsOn();
+        this.colors = {
+            "red": "#dd3737ff", "pink": "#f36fb3ff", "blue": "#23ccffff",
+            "green": "#2e5024", "brown": "#855123", "yellow": "#ffff00",
+            "black": "#333", "cue": "#eee"
+        };
+    }
+    draw() {
+        push();
+        noStroke();
+        fill(this.colors[this.color]);
+        if (this.isPhysicsEnabled) {
+            beginShape();
+            this.body.vertices.forEach(bodyVertex => {
+                vertex(bodyVertex.x, bodyVertex.y)
+            });
+            endShape(CLOSE);
+        } else {
+            translate(this.tablePosition.x, this.tablePosition.y);
+            circle(this.position.x, this.position.y, this.diameter);
+        }
+        pop();
+    }
+    turnPhysicsOn() {
+        this.body = Bodies.circle(
+            this.tablePosition.x + this.position.x, this.tablePosition.y + this.position.y, this.diameter / 2, this.physicsOptions
+        );
+        Composite.add(engine.world, [this.body]);
+        this.isPhysicsEnabled = true;
+    }
+    turnPhysicsOff() {
+        Composite.remove(engine.world, this.body);
+        this.isPhysicsEnabled = false;
+        this.body = null;
+    }
+};
 
 /**
- * Handle mouse press events
+ * Represents the cue ball.
+ * @class
  */
-function mousePressed() {
-  // TODO: If cue ball not placed, begin placement (restricted to D)
-  // TODO: Otherwise start aiming cue (set isAiming true)
-}
+class CueBall extends Ball {
+    constructor(tablePosition, position, diameter) {
+        super(tablePosition, position, diameter, "cue");
+    }
+};
 
 /**
- * Handle mouse release events
+ * Represents the snooker cue.
+ * @class
  */
-function mouseReleased() {
-  // TODO: If placing cue ball, place only if inside D (interactive insertion requirement)
-  // TODO: If aiming, apply impulse/force to cue ball via Matter.Body (strike)
-  // TODO: Spawn a short-lived cue impact effect at cue ball position
-}
+class Cue {
+    constructor(tablePosition, size) {
+        this.tablePosition = tablePosition;
+        this.size = size;
+        this.color = "#d28c54";
+        this.states = Object.freeze({
+            HIDDEN: "HIDDEN",
+            VISIBLE: "VISIBLE"
+        });
+        this.currentState = this.states.HIDDEN;
 
-function mouseMoved() {
-  // TODO: Update cueBallGhostPos while placing; clamp to D-zone
-}
+        // Shot path properties
+        this.showShotPath = true;
+        this.shotPathColor = "rgba(255, 255, 255, 0.7)";
+        this.shotPathLength = 500;
+    }
 
-function keyPressed() {
-  // Table modes (keys 1–3)
-  if (key === "1") setMode(GameMode.STANDARD);
-  if (key === "2") setMode(GameMode.RANDOM_REDS_CLUSTER);
-  if (key === "3") setMode(GameMode.PRACTICE_REDS);
+    spawn(cueBall) {
+        this.cueBall = cueBall;
+        this.currentState = this.states.VISIBLE;
+    }
 
-  // TODO: Add cue control keys (fine rotation/power) to complement mouse
+    draw() {
+        if (this.currentState === this.states.HIDDEN) {
+            return;
+        }
+
+        // Get cue ball position
+        let cueBallX, cueBallY;
+        if (this.cueBall.isPhysicsEnabled) {
+            cueBallX = this.cueBall.body.position.x;
+            cueBallY = this.cueBall.body.position.y;
+        } else {
+            cueBallX = this.tablePosition.x + this.cueBall.position.x;
+            cueBallY = this.tablePosition.y + this.cueBall.position.y;
+        }
+
+        // TWO DIFFERENT ANGLES:
+        // 1. For CUE: angle from mouse to cue ball (cue appears behind ball)
+        const cueDeltaX = cueBallX - mouseX;
+        const cueDeltaY = cueBallY - mouseY;
+        const cueAngle = atan2(cueDeltaY, cueDeltaX);
+
+        // 2. For SHOT PATH: angle from cue ball to mouse (ball direction)
+        const shotDeltaX = mouseX - cueBallX;
+        const shotDeltaY = mouseY - cueBallY;
+        const shotAngle = atan2(shotDeltaY, shotDeltaX);
+
+        // Draw shot path first (in background)
+        if (this.showShotPath) {
+            this.drawShotPath(cueBallX, cueBallY, shotAngle);
+        }
+
+        // Then draw the cue on top
+        this.drawCueStick(cueBallX, cueBallY, cueAngle);
+    }
+
+    drawCueStick(cueBallX, cueBallY, cueAngle) {
+        const cueStartDistance = this.cueBall.diameter / 2 + 10;
+        const cueStartX = cueBallX + cos(cueAngle) * cueStartDistance;
+        const cueStartY = cueBallY + sin(cueAngle) * cueStartDistance;
+        const cueEndX = cueStartX + cos(cueAngle) * this.size.x;
+        const cueEndY = cueStartY + sin(cueAngle) * this.size.x;
+
+        push();
+        stroke(this.color);
+        strokeWeight(this.size.y);
+        strokeCap(ROUND);
+        line(cueStartX, cueStartY, cueEndX, cueEndY);
+        pop();
+    }
+
+    drawShotPath(cueBallX, cueBallY, shotAngle) {
+        push();
+        stroke(this.shotPathColor);
+        strokeWeight(2);
+
+        // Draw dotted line
+        const segmentLength = 10;
+        const gapLength = 5;
+        const totalSegmentLength = segmentLength + gapLength;
+        const numSegments = this.shotPathLength / totalSegmentLength;
+
+        // Start just outside the cue ball
+        const startDistance = this.cueBall.diameter / 2 + 5;
+        let currentX = cueBallX + cos(shotAngle) * startDistance;
+        let currentY = cueBallY + sin(shotAngle) * startDistance;
+
+        for (let i = 0; i < numSegments; i++) {
+            const dotStartX = currentX;
+            const dotStartY = currentY;
+            const dotEndX = currentX + cos(shotAngle) * segmentLength;
+            const dotEndY = currentY + sin(shotAngle) * segmentLength;
+
+            line(dotStartX, dotStartY, dotEndX, dotEndY);
+
+            currentX += cos(shotAngle) * totalSegmentLength;
+            currentY += sin(shotAngle) * totalSegmentLength;
+        }
+
+        // Draw arrow at the end
+        this.drawArrow(
+            currentX - cos(shotAngle) * gapLength,
+            currentY - sin(shotAngle) * gapLength,
+            shotAngle
+        );
+
+        pop();
+    }
+
+    drawArrow(x, y, angle) {
+        push();
+        translate(x, y);
+        rotate(angle);
+
+        stroke(this.shotPathColor);
+        strokeWeight(2);
+        fill(this.shotPathColor);
+
+        // Arrow head
+        beginShape();
+        vertex(0, 0);
+        vertex(-10, -5);
+        vertex(-10, 5);
+        endShape(CLOSE);
+
+        pop();
+    }
 }
